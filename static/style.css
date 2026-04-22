@@ -46,6 +46,15 @@ button.link {
   color: #53bdeb;
   font-weight: 400;
 }
+button.join-btn {
+  background: #128c7e;
+  color: #fff;
+}
+.divider {
+  border: none;
+  border-top: 1px solid #2a3942;
+  margin: 1rem 0 .5rem;
+}
 .muted { color: #aebac1; font-size: .9rem; }
 .success { color: #25d366; font-size: 1.4rem; text-align: center; padding: 1rem 0; }
 .status { min-height: 1.25rem; margin-top: 1rem; color: #f15c6d; font-size: .9rem; }

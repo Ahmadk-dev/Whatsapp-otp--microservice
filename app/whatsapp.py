@@ -32,9 +32,13 @@ async def send_template_otp(phone: str, code: str) -> dict:
     if resp.status_code >= 400:
         try:
             payload = resp.json()
+            code = payload.get("code")
             message = payload.get("message") or resp.text
         except Exception:
-            message = resp.text
-        raise WhatsAppError(f"Twilio API {resp.status_code}: {message}")
+            code, message = None, resp.text
+
+        if code == 63038:
+            raise WhatsAppError("Daily WhatsApp message limit reached. Please try again after midnight UTC.")
+        raise WhatsAppError(f"Could not send WhatsApp message. Please try again later.")
 
     return resp.json()

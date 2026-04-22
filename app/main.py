@@ -8,7 +8,7 @@ from sqlalchemy.orm import Session
 
 from app.config import settings
 from app.db import Base, engine, get_db
-from app.otp import OtpError, check_otp, create_otp
+from app.otp import CooldownError, OtpError, check_otp, create_otp
 from app.schemas import SendOtpRequest, SendOtpResponse, VerifyOtpRequest, VerifyOtpResponse
 from app.whatsapp import WhatsAppError, send_template_otp
 
@@ -20,8 +20,9 @@ async def lifespan(_app: FastAPI):
     from app import models  # noqa: F401 — must be imported before drop_all/create_all
 
     Base.metadata.create_all(bind=engine)
-    with engine.begin() as conn:
-        conn.execute(models.OtpCode.__table__.delete())
+    if settings.RESET_ON_STARTUP:
+        with engine.begin() as conn:
+            conn.execute(models.OtpCode.__table__.delete())
     yield
 
 
@@ -33,12 +34,25 @@ async def index():
     return FileResponse(STATIC_DIR / "index.html")
 
 
+@app.get("/api/config", include_in_schema=False)
+async def public_config():
+    number = settings.TWILIO_WHATSAPP_FROM.replace("whatsapp:", "")
+    keyword = settings.TWILIO_SANDBOX_KEYWORD.strip()
+    return {"sandbox_number": number, "sandbox_keyword": keyword}
+
+
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 
 
 @app.post("/api/send-otp", response_model=SendOtpResponse)
 async def send_otp(body: SendOtpRequest, db: Session = Depends(get_db)):
-    code = create_otp(db, body.phone)
+    try:
+        code = create_otp(db, body.phone)
+    except CooldownError as e:
+        raise HTTPException(
+            status_code=429,
+            detail=f"Please wait {e.retry_after} seconds before requesting a new code.",
+        )
     try:
         await send_template_otp(body.phone, code)
     except WhatsAppError as e:

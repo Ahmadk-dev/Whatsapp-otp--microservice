@@ -164,7 +164,7 @@ nano .env
 - `MYSQL_USER` / `MYSQL_PASSWORD` = dedicated DB user (NOT root)
 - Real Twilio credentials
 
-> ⚠️ Remove or replace the `OtpCode.__table__.delete()` line in `app/main.py` before deploying if you do not want rows wiped on every service restart.
+> ⚠️ Set `RESET_ON_STARTUP=false` in `.env` on the server. The default is `false` — rows are only wiped on startup when explicitly set to `true` (used in local dev).
 
 ### 4. Run as a systemd service
 
@@ -241,7 +241,7 @@ Expected response: `{ "ok": true, "expires_in": 300 }`
 ## Known constraints / gotchas
 
 - **Twilio sandbox**: Recipients must send a join code to the Twilio sandbox number before they can receive messages. This restriction is lifted when you upgrade to a paid Twilio WhatsApp number.
-- **OTP table wipe on startup**: `app/main.py` lifespan deletes all rows on every boot — intentional for dev, remove for production.
+- **OTP table wipe on startup**: Controlled by `RESET_ON_STARTUP` env var. Set to `true` in local dev, `false` (default) in production.
 - **No rate limiting**: The `/api/send-otp` endpoint has no per-IP or per-phone rate limit. Add `slowapi` if needed before exposing to the public internet.
 - **Plain HTTP**: No TLS is configured. Add Certbot/Let's Encrypt behind Nginx for HTTPS before going to production.
 - **Single-instance only**: OTP state is in MySQL, so multiple uvicorn workers or EC2 instances share state correctly — but the `table.delete()` on startup would wipe data if multiple instances restart at different times. Remove it for multi-instance setups.

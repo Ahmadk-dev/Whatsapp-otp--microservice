@@ -24,9 +24,32 @@ def verify_hash(code: str, code_hash: str) -> bool:
         return False
 
 
+class CooldownError(Exception):
+    def __init__(self, retry_after: int):
+        super().__init__("cooldown")
+        self.retry_after = retry_after  # seconds until resend is allowed
+
+
 def create_otp(db: Session, phone: str) -> str:
-    """Invalidate any prior unverified codes for this phone, insert a new one, return the plain code."""
+    """Invalidate any prior unverified codes for this phone, insert a new one, return the plain code.
+
+    Raises CooldownError if a code was sent less than OTP_RESEND_COOLDOWN_SECONDS ago.
+    """
     now = datetime.utcnow()
+
+    recent = db.execute(
+        select(OtpCode)
+        .where(OtpCode.phone == phone, OtpCode.verified_at.is_(None), OtpCode.expires_at > now)
+        .order_by(OtpCode.id.desc())
+        .limit(1)
+    ).scalar_one_or_none()
+
+    if recent is not None:
+        age = (now - recent.created_at).total_seconds()
+        wait = settings.OTP_RESEND_COOLDOWN_SECONDS - int(age)
+        if wait > 0:
+            raise CooldownError(retry_after=wait)
+
     db.execute(
         update(OtpCode)
         .where(OtpCode.phone == phone, OtpCode.verified_at.is_(None), OtpCode.expires_at > now)

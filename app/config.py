@@ -6,16 +6,19 @@ class Settings(BaseSettings):
 
     TWILIO_ACCOUNT_SID: str
     TWILIO_AUTH_TOKEN: str
-    TWILIO_WHATSAPP_FROM: str  # e.g. "whatsapp:+14155238886" for the sandbox number
+    TWILIO_WHATSAPP_FROM: str        # e.g. "whatsapp:+14155238886"
+    TWILIO_SANDBOX_KEYWORD: str = "" # e.g. "join yellow-tiger" — leave empty in production
 
     MYSQL_HOST: str = "127.0.0.1"
     MYSQL_PORT: int = 3306
-    MYSQL_USER: str = "root"
-    MYSQL_PASSWORD: str = ""
+    MYSQL_USER: str
+    MYSQL_PASSWORD: str
     MYSQL_DB: str = "whatsappotp"
 
     OTP_TTL_SECONDS: int = 300
     OTP_MAX_ATTEMPTS: int = 5
+    OTP_RESEND_COOLDOWN_SECONDS: int = 60
+    RESET_ON_STARTUP: bool = False
 
     @property
     def database_url(self) -> str:

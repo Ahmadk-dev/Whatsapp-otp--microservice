@@ -10,6 +10,14 @@
   <main class="card">
     <h1>WhatsApp OTP</h1>
 
+    <div id="sandbox-banner" hidden>
+      <p class="muted">First time? You must join the WhatsApp sandbox before receiving codes.</p>
+      <a id="join-link" href="#" target="_blank" rel="noopener">
+        <button type="button" class="join-btn">Join Sandbox on WhatsApp</button>
+      </a>
+      <hr class="divider" />
+    </div>
+
     <section id="step-phone">
       <label for="phone">Phone number (E.164)</label>
       <input id="phone" type="tel" placeholder="+15551234567" autocomplete="tel" />
