@@ -1,0 +1,7 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(\"d:/WhatsappOTP-Task/venv/Scripts/pip.exe\" list *)"
+    ]
+  }
+}

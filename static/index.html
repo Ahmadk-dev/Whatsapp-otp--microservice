@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>WhatsApp OTP</title>
+  <link rel="stylesheet" href="/static/style.css" />
+</head>
+<body>
+  <main class="card">
+    <h1>WhatsApp OTP</h1>
+
+    <section id="step-phone">
+      <label for="phone">Phone number (E.164)</label>
+      <input id="phone" type="tel" placeholder="+15551234567" autocomplete="tel" />
+      <button id="send-btn" type="button">Send OTP</button>
+    </section>
+
+    <section id="step-code" hidden>
+      <p class="muted">We sent a 6-digit code to <span id="phone-echo"></span> via WhatsApp.</p>
+      <label for="code">Enter code</label>
+      <input id="code" type="text" inputmode="numeric" maxlength="6" autocomplete="one-time-code" />
+      <button id="verify-btn" type="button">Verify</button>
+      <button id="resend-btn" type="button" class="link">Resend</button>
+    </section>
+
+    <section id="step-done" hidden>
+      <div class="success">Verified &#10003;</div>
+      <button id="restart-btn" type="button" class="link">Start over</button>
+    </section>
+
+    <p id="status" class="status" role="status"></p>
+  </main>
+
+  <script src="/static/app.js"></script>
+</body>
+</html>
