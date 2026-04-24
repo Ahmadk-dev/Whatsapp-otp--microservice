@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Verify OTP — WhatsApp OTP</title>
+  <link rel="stylesheet" href="/static/style.css" />
+</head>
+<body>
+  <main class="card">
+    <h1>WhatsApp OTP</h1>
+
+    <div id="verify-section">
+      <p class="muted" id="sent-to">Enter the 6-digit code sent to your WhatsApp.</p>
+      <label for="code">Verification code</label>
+      <input id="code" type="text" inputmode="numeric" maxlength="6"
+             autocomplete="one-time-code" placeholder="123456" />
+      <button id="verify-btn" class="btn" type="button">Verify</button>
+      <button id="resend-btn" class="btn btn-link" type="button">Resend code</button>
+    </div>
+
+    <div id="success-section" class="success" hidden>
+      <div class="check">&#10003;</div>
+      <p>Phone number verified successfully.</p>
+      <a href="/"><button class="btn" type="button">Start over</button></a>
+    </div>
+
+    <p id="status" class="status" role="status"></p>
+  </main>
+
+  <script src="/static/verify.js"></script>
+</body>
+</html>

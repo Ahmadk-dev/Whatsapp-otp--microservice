@@ -1,0 +1,23 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>WhatsApp OTP</title>
+  <link rel="stylesheet" href="/static/style.css" />
+</head>
+<body>
+  <main class="card">
+    <h1>WhatsApp OTP</h1>
+    <p class="subtitle">Enter your phone number to receive a one-time code via WhatsApp.</p>
+
+    <label for="phone">Phone number (E.164)</label>
+    <input id="phone" type="tel" placeholder="+15551234567" autocomplete="tel" />
+    <button id="send-btn" class="btn" type="button">Receive OTP</button>
+
+    <p id="status" class="status" role="status"></p>
+  </main>
+
+  <script src="/static/index.js"></script>
+</body>
+</html>
