@@ -2,140 +2,226 @@
 
 ## What this is
 
-A minimal FastAPI web app that sends a 6-digit OTP to a phone number via WhatsApp (Twilio WhatsApp sandbox) and verifies the code the user types back. No user accounts, no sessions — purely stateless OTP send/verify.
+A two-server OTP system. The user enters a phone number on a web page, a 6-digit OTP is generated and queued by the main server, then picked up and sent via WhatsApp Web (Playwright) by a standalone microservice running locally. The user then enters the OTP on a second page and the main server verifies it against the DB.
+
+No Twilio. No Meta API. WhatsApp is automated via Playwright using a personal WhatsApp account.
 
 ---
 
-## Project layout
+## Architecture Overview
+
+```
+Browser (Page 1 — phone input)
+      ↓  POST /api/send-otp
+Server 1 — Main Server (FastAPI, runs on AWS EC2)
+  - Generates 6-digit OTP
+  - Stores bcrypt hash in MySQL (otp_codes table)
+  - Inserts a job into MySQL (otp_jobs table) with status: pending
+      ↓  POST /send-whatsapp (HTTP call)
+Server 2 — WhatsApp Microservice (FastAPI + Playwright, runs locally)
+  - Receives phone + OTP
+  - Opens WhatsApp Web via Playwright
+  - Starts a new chat with the phone number
+  - Sends the OTP message
+  - Returns { "ok": true } to Server 1
+      ↑  Server 1 marks job as sent in DB
+Browser (Page 2 — OTP input)
+      ↓  POST /api/verify-otp
+Server 1
+  - Checks OTP matches phone, not expired, not used
+  - Returns verified or error
+```
+
+---
+
+## Project Layout
 
 ```
 .
-├── app/
-│   ├── config.py      # pydantic-settings — reads all env vars
-│   ├── db.py          # SQLAlchemy engine, SessionLocal, get_db dependency
-│   ├── main.py        # FastAPI app, two API routes, static file mount
-│   ├── models.py      # OtpCode ORM model (single table)
-│   ├── otp.py         # generate / hash / verify OTP, DB read-write
-│   ├── schemas.py     # Pydantic request/response shapes, E.164 validation
-│   └── whatsapp.py    # Twilio HTTP client (httpx, no Twilio SDK)
-├── static/
-│   ├── index.html     # Single-page UI — three states: phone / code / verified
-│   ├── app.js         # Vanilla JS, fetch calls, state toggling
-│   └── style.css      # Dark WhatsApp-style theme
-├── .env               # NOT committed — see variables below
-├── .env.example       # Committed template
-├── requirements.txt
-└── CLAUDE.md          # This file
+├── main-server/                  # Server 1 — runs on AWS EC2
+│   ├── app/
+│   │   ├── config.py             # pydantic-settings — reads all env vars
+│   │   ├── db.py                 # SQLAlchemy engine, SessionLocal, get_db
+│   │   ├── main.py               # FastAPI app, API routes, static mount
+│   │   ├── models.py             # OtpCode + OtpJob ORM models
+│   │   ├── otp.py                # generate / hash / verify OTP, DB read-write
+│   │   ├── schemas.py            # Pydantic request/response shapes, E.164 validation
+│   │   └── whatsapp_client.py    # HTTP client that calls Server 2
+│   ├── static/
+│   │   ├── index.html            # Page 1 — phone number input + "Receive OTP" button
+│   │   ├── verify.html           # Page 2 — OTP code input + verify button
+│   │   ├── app.js                # Vanilla JS, fetch calls, page state
+│   │   └── style.css             # Dark WhatsApp-style theme
+│   ├── .env                      # NOT committed — see variables below
+│   ├── .env.example
+│   ├── requirements.txt
+│   └── CLAUDE.md                 # This file
+│
+└── whatsapp-service/             # Server 2 — runs locally on dev machine
+    ├── main.py                   # FastAPI app — POST /send-whatsapp endpoint
+    ├── whatsapp.py               # Playwright logic — open WA Web, send message
+    ├── session/                  # Saved Playwright browser session (gitignored)
+    ├── test_send.py              # Standalone test script — no Server 1 needed
+    ├── .env
+    ├── .env.example
+    └── requirements.txt
 ```
 
 ---
 
-## Environment variables
+## Environment Variables
 
-All settings live in `.env` (loaded by pydantic-settings at startup). `.env` is gitignored — create it on the server from the values below.
+### main-server/.env
 
 | Variable | Example | Notes |
 |---|---|---|
-| `TWILIO_ACCOUNT_SID` | `ACb50c4d...` | From Twilio Console |
-| `TWILIO_AUTH_TOKEN` | `61c707...` | From Twilio Console — treat as a secret |
-| `TWILIO_WHATSAPP_FROM` | `whatsapp:+14155238886` | Twilio sandbox number (include `whatsapp:` prefix) |
 | `MYSQL_HOST` | `127.0.0.1` | Change to RDS endpoint on AWS |
 | `MYSQL_PORT` | `3306` | |
-| `MYSQL_USER` | `root` | **Use a dedicated least-privilege user in production** |
-| `MYSQL_PASSWORD` | `ahmad` | **Replace with a strong password in production** |
+| `MYSQL_USER` | `root` | **Use a dedicated user in production** |
+| `MYSQL_PASSWORD` | `ahmad` | **Replace with strong password in production** |
 | `MYSQL_DB` | `whatsappotp` | Database must exist before first run |
 | `OTP_TTL_SECONDS` | `300` | How long a code is valid (default 5 min) |
 | `OTP_MAX_ATTEMPTS` | `5` | Wrong-code attempts before code is invalidated |
+| `WHATSAPP_SERVICE_URL` | `http://localhost:8001` | URL of Server 2 |
+| `RESET_ON_STARTUP` | `false` | Set to `true` in local dev to wipe DB on restart |
+
+### whatsapp-service/.env
+
+| Variable | Example | Notes |
+|---|---|---|
+| `PORT` | `8001` | Port Server 2 listens on |
+| `SESSION_DIR` | `./session` | Where Playwright saves the WhatsApp login session |
+| `MAIN_SERVER_URL` | `http://localhost:8000` | URL of Server 1 (for callbacks if needed) |
 
 ---
 
 ## Database
 
-- Engine: **MySQL** (SQLAlchemy + PyMySQL driver).
-- Single table: `otp_codes` — auto-created by SQLAlchemy on startup via `Base.metadata.create_all()`.
-- **On every startup, all rows are deleted** (`OtpCode.__table__.delete()` in the lifespan hook). This is intentional for development — remove or gate that line behind an env flag for production if persistence across restarts is needed.
+- Engine: **MySQL** (SQLAlchemy + PyMySQL driver)
+- DB name: `whatsappotp`
+- Local connection: root / ahmad (dev only — replace in production)
+- Tables auto-created by SQLAlchemy on startup via `Base.metadata.create_all()`
 
-Schema:
+### Table: `otp_codes`
 
 | Column | Type | Notes |
 |---|---|---|
 | `id` | BIGINT PK | auto-increment |
 | `phone` | VARCHAR(32) | E.164, indexed |
-| `code_hash` | VARCHAR(128) | bcrypt hash — plain code is never stored |
+| `code_hash` | VARCHAR(128) | bcrypt hash — plain code never stored |
 | `expires_at` | DATETIME | UTC |
 | `attempts` | INT | incremented on each wrong guess |
 | `verified_at` | DATETIME NULL | set on successful verify |
 | `created_at` | DATETIME | server default NOW() |
 
+### Table: `otp_jobs`
+
+| Column | Type | Notes |
+|---|---|---|
+| `id` | BIGINT PK | auto-increment |
+| `phone` | VARCHAR(32) | recipient phone number |
+| `code` | VARCHAR(6) | plain OTP (sent to WA service, not stored long-term) |
+| `status` | ENUM | `pending` / `sent` / `failed` |
+| `created_at` | DATETIME | server default NOW() |
+| `updated_at` | DATETIME | updated when status changes |
+
 ---
 
-## API endpoints
+## API Endpoints
 
-### `POST /api/send-otp`
+### Server 1 (main-server) — port 8000
+
+#### `POST /api/send-otp`
 ```json
 { "phone": "+96181926481" }
 ```
-- Invalidates any live OTP for that phone, generates a new 6-digit code.
-- Stores bcrypt hash in DB, sends plain code to user via Twilio WhatsApp.
-- Returns `{ "ok": true, "expires_in": 300 }` or HTTP 502 on Twilio error.
+- Invalidates any live OTP for that phone
+- Generates a new 6-digit OTP, stores bcrypt hash in `otp_codes`
+- Inserts a job in `otp_jobs` with status `pending`
+- Calls Server 2 `POST /send-whatsapp` with phone + plain OTP
+- Marks job as `sent` or `failed` based on Server 2 response
+- Returns `{ "ok": true, "expires_in": 300 }` or HTTP 502 on failure
 
-### `POST /api/verify-otp`
+#### `POST /api/verify-otp`
 ```json
 { "phone": "+96181926481", "code": "057529" }
 ```
-- Looks up the latest unverified, non-expired row.
-- Returns `{ "verified": true }` or HTTP 400 with `detail` = `"invalid"` / `"expired"` / `"too_many_attempts"`.
+- Looks up latest unverified, non-expired row in `otp_codes`
+- Returns `{ "verified": true }` or HTTP 400 with `detail` = `"invalid"` / `"expired"` / `"too_many_attempts"`
 
-### `GET /`
-Serves `static/index.html`.
+#### `GET /`
+Serves `static/index.html` (Page 1 — phone input)
+
+#### `GET /verify`
+Serves `static/verify.html` (Page 2 — OTP input)
 
 ---
 
-## Running locally
+### Server 2 (whatsapp-service) — port 8001
 
+#### `POST /send-whatsapp`
+```json
+{ "phone": "+96181926481", "code": "057529" }
+```
+- Opens WhatsApp Web via Playwright using saved session
+- Navigates to a new chat with the given phone number
+- Sends the OTP message
+- Returns `{ "ok": true }` or HTTP 500 on failure
+
+#### `GET /health`
+Returns `{ "status": "ok" }` — used by Server 1 to check if Server 2 is reachable
+
+---
+
+## Running Locally
+
+### Server 2 first (WhatsApp microservice)
 ```bash
-# 1. Create virtualenv and install deps
+cd whatsapp-service
 python -m venv venv
 venv/Scripts/pip install -r requirements.txt   # Windows
 # source venv/bin/activate && pip install -r requirements.txt  # Linux/Mac
 
-# 2. Create the database (table is auto-created by the app)
+playwright install chromium
+
+cp .env.example .env
+venv/Scripts/uvicorn main:app --port 8001 --reload
+```
+- First run: a browser window opens with WhatsApp Web — scan the QR code once
+- Session is saved to `./session` — QR not needed again after that
+- Test independently using `python test_send.py` before connecting to Server 1
+
+### Server 1 (main server)
+```bash
+cd main-server
+python -m venv venv
+venv/Scripts/pip install -r requirements.txt
+
 mysql -uroot -pahmad -e "CREATE DATABASE IF NOT EXISTS whatsappotp CHARACTER SET utf8mb4;"
 
-# 3. Copy and fill env
 cp .env.example .env
-# edit .env with real Twilio credentials
-
-# 4. Start
-venv/Scripts/uvicorn app.main:app --reload        # Windows
-# uvicorn app.main:app --reload --host 0.0.0.0    # expose on network
+venv/Scripts/uvicorn app.main:app --reload
 ```
 
 Open http://127.0.0.1:8000/
 
 ---
 
-## Deploying on AWS — task for the deployment agent
+## Deploying on AWS
 
-The goal is to run this app on an **EC2 instance** with a **MySQL backend** (either on the same instance or RDS). Below is the full checklist.
+Server 1 runs on EC2. Server 2 runs locally (Playwright requires a display/browser — not suited for headless EC2 on free tier without extra setup).
 
-### 1. Infrastructure to provision
+### EC2 Setup (Server 1 only)
 
-- **EC2**: Amazon Linux 2023 or Ubuntu 22.04, at minimum `t3.micro`. Open inbound ports: **22** (SSH), **80** (HTTP), **443** (HTTPS if SSL is added).
-- **MySQL**: Either install MySQL 8 on the EC2 instance, or use **RDS MySQL 8** (recommended for production). The DB name must be `whatsappotp`.
-- **Security group**: EC2 must be able to reach the MySQL host on port 3306. If using RDS, the RDS security group must allow inbound 3306 from the EC2 security group.
-
-### 2. Server setup (EC2)
+- **Instance**: Amazon Linux 2023 or Ubuntu 22.04, t2.micro (free tier)
+- **Ports open**: 22 (SSH), 80 (HTTP), 443 (HTTPS optional)
+- **MySQL**: Install on EC2 or use RDS free tier (db.t3.micro)
 
 ```bash
-# Update system
-sudo dnf update -y   # Amazon Linux 2023
-# or: sudo apt update && sudo apt upgrade -y   # Ubuntu
+sudo dnf update -y
+sudo dnf install python3.10 python3.10-pip git nginx -y
 
-# Install Python 3.10+
-sudo dnf install python3.10 python3.10-pip git -y
-
-# If MySQL is on this instance (skip if using RDS)
+# MySQL on same instance (skip if using RDS)
 sudo dnf install mysql-server -y
 sudo systemctl enable --now mysqld
 sudo mysql -e "CREATE DATABASE whatsappotp CHARACTER SET utf8mb4;"
@@ -144,42 +230,32 @@ sudo mysql -e "GRANT SELECT,INSERT,UPDATE,DELETE ON whatsappotp.* TO 'otpapp'@'l
 sudo mysql -e "FLUSH PRIVILEGES;"
 ```
 
-### 3. Deploy the app
-
+### Deploy Server 1
 ```bash
-# Clone or copy files to the server (no venv/, no .env)
 git clone <repo-url> /opt/whatsappotp
-cd /opt/whatsappotp
-
+cd /opt/whatsappotp/main-server
 python3.10 -m venv venv
 venv/bin/pip install -r requirements.txt
-
-# Create .env — fill in real values
 cp .env.example .env
-nano .env
+nano .env   # fill in DB credentials + WHATSAPP_SERVICE_URL (your local machine's IP)
 ```
 
-`.env` on EC2 must have:
-- `MYSQL_HOST` = RDS endpoint or `127.0.0.1` if local
+`.env` on EC2:
 - `MYSQL_USER` / `MYSQL_PASSWORD` = dedicated DB user (NOT root)
-- Real Twilio credentials
+- `WHATSAPP_SERVICE_URL` = `http://<YOUR_LOCAL_IP>:8001` (your machine running Server 2)
+- `RESET_ON_STARTUP` = `false`
 
-> ⚠️ Set `RESET_ON_STARTUP=false` in `.env` on the server. The default is `false` — rows are only wiped on startup when explicitly set to `true` (used in local dev).
-
-### 4. Run as a systemd service
-
-Create `/etc/systemd/system/whatsappotp.service`:
-
+### Systemd Service
 ```ini
 [Unit]
-Description=WhatsApp OTP FastAPI app
+Description=WhatsApp OTP Main Server
 After=network.target
 
 [Service]
 User=ec2-user
-WorkingDirectory=/opt/whatsappotp
-EnvironmentFile=/opt/whatsappotp/.env
-ExecStart=/opt/whatsappotp/venv/bin/uvicorn app.main:app --host 0.0.0.0 --port 8000 --workers 2
+WorkingDirectory=/opt/whatsappotp/main-server
+EnvironmentFile=/opt/whatsappotp/main-server/.env
+ExecStart=/opt/whatsappotp/main-server/venv/bin/uvicorn app.main:app --host 0.0.0.0 --port 8000 --workers 2
 Restart=always
 RestartSec=5
 
@@ -190,18 +266,9 @@ WantedBy=multi-user.target
 ```bash
 sudo systemctl daemon-reload
 sudo systemctl enable --now whatsappotp
-sudo systemctl status whatsappotp
 ```
 
-### 5. Expose on port 80 (Nginx reverse proxy)
-
-```bash
-sudo dnf install nginx -y   # or apt install nginx
-sudo systemctl enable --now nginx
-```
-
-`/etc/nginx/conf.d/whatsappotp.conf`:
-
+### Nginx Reverse Proxy
 ```nginx
 server {
     listen 80;
@@ -220,28 +287,14 @@ server {
 sudo nginx -t && sudo systemctl reload nginx
 ```
 
-### 6. Verify deployment
-
-```bash
-# From the EC2 instance
-curl -s -X POST http://localhost:8000/api/send-otp \
-  -H "Content-Type: application/json" \
-  -d '{"phone": "+96181926481"}' | python3 -m json.tool
-
-# From outside — replace with your EC2 public IP or domain
-curl -s -X POST http://<EC2_PUBLIC_IP>/api/send-otp \
-  -H "Content-Type: application/json" \
-  -d '{"phone": "+96181926481"}' | python3 -m json.tool
-```
-
-Expected response: `{ "ok": true, "expires_in": 300 }`
-
 ---
 
-## Known constraints / gotchas
+## Known Constraints / Gotchas
 
-- **Twilio sandbox**: Recipients must send a join code to the Twilio sandbox number before they can receive messages. This restriction is lifted when you upgrade to a paid Twilio WhatsApp number.
-- **OTP table wipe on startup**: Controlled by `RESET_ON_STARTUP` env var. Set to `true` in local dev, `false` (default) in production.
-- **No rate limiting**: The `/api/send-otp` endpoint has no per-IP or per-phone rate limit. Add `slowapi` if needed before exposing to the public internet.
-- **Plain HTTP**: No TLS is configured. Add Certbot/Let's Encrypt behind Nginx for HTTPS before going to production.
-- **Single-instance only**: OTP state is in MySQL, so multiple uvicorn workers or EC2 instances share state correctly — but the `table.delete()` on startup would wipe data if multiple instances restart at different times. Remove it for multi-instance setups.
+- **WhatsApp Web automation**: Playwright controls a real browser session tied to your personal WhatsApp account. WhatsApp may occasionally show a "linked devices" warning — this is normal. Do not use at scale.
+- **Server 2 is local**: Playwright needs a real browser with a display. Running it on a headless EC2 free tier requires Xvfb (virtual display) — avoid for now, keep it local.
+- **Session persistence**: The Playwright session is saved in `whatsapp-service/session/`. If WhatsApp logs out, delete the session folder and re-scan the QR code.
+- **OTP table wipe on startup**: Controlled by `RESET_ON_STARTUP` env var. `true` in local dev, `false` in production.
+- **No rate limiting**: Add `slowapi` to `/api/send-otp` before exposing to public internet.
+- **Plain HTTP**: Add Certbot/Let's Encrypt behind Nginx for HTTPS before going to production.
+- **EC2 ↔ Local communication**: Server 1 (EC2) calls Server 2 (your machine) over HTTP. Make sure your local machine's port 8001 is reachable from EC2 — either via port forwarding on your router or a tunneling tool like ngrok.
