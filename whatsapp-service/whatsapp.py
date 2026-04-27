@@ -1,4 +1,6 @@
 import asyncio
+import shutil
+import webbrowser
 from pathlib import Path
 from urllib.parse import quote
 
@@ -57,7 +59,6 @@ class WhatsAppSender:
 
         # Wipe any saved session so every startup requires a fresh login
         if self.session_dir.exists():
-            import shutil
             shutil.rmtree(self.session_dir)
             print("[whatsapp] Session cleared.")
         self.session_dir.mkdir(parents=True, exist_ok=True)
@@ -87,7 +88,6 @@ class WhatsAppSender:
             print("[whatsapp] Session restored — already logged in.")
         else:
             print("[whatsapp] Not logged in — opening setup page...")
-            import webbrowser
             webbrowser.open("http://localhost:8001/setup")
 
     async def begin_phone_login(self, phone: str) -> str | None:
