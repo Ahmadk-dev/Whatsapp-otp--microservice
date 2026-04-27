@@ -23,6 +23,12 @@ async def send_otp(phone: str, code: str) -> None:
     except httpx.RequestError as e:
         raise WhatsAppServiceError(f"WhatsApp service request failed: {e}")
 
+    if resp.status_code == 503:
+        raise WhatsAppServiceError(
+            "WhatsApp service is not logged in. "
+            "Open http://localhost:8001/setup to complete setup."
+        )
+
     if resp.status_code >= 400:
         try:
             detail = resp.json().get("detail", resp.text)
