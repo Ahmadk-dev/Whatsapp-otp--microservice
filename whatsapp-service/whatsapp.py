@@ -72,7 +72,7 @@ class WhatsAppSender:
         )
 
         self._page = self._ctx.pages[0] if self._ctx.pages else await self._ctx.new_page()
-        await self._page.goto(WA_HOME, wait_until="domcontentloaded")
+        await self._page.goto(WA_HOME, wait_until="domcontentloaded", timeout=120_000)
 
         print("[whatsapp] Waiting for WhatsApp Web to load...")
         try:
@@ -108,7 +108,7 @@ class WhatsAppSender:
 
         # Return to home if we drifted to a chat URL
         if "send?" in page.url:
-            await page.goto(WA_HOME, wait_until="domcontentloaded")
+            await page.goto(WA_HOME, wait_until="domcontentloaded", timeout=120_000)
             await page.wait_for_selector(f"{SEL_CHAT_LIST}, {SEL_QR_CODE}", timeout=30_000)
 
         async with self._lock:
@@ -159,19 +159,57 @@ class WhatsAppSender:
             except Exception:
                 await page.keyboard.press("Enter")
 
-            # Step 4 — try to read the pairing code
-            await asyncio.sleep(1.5)
-            try:
-                code_el = await page.wait_for_selector(SEL_PAIRING_CODE, timeout=15_000)
-                if code_el:
-                    text = (await code_el.inner_text()).strip()
-                    if text:
-                        print(f"[whatsapp] Pairing code: {text}")
-                        return text
-            except Exception:
-                pass
+            # Step 4 — scrape the pairing code
+            await asyncio.sleep(2)
 
-            print("[whatsapp] Pairing code is visible in the browser window.")
+            pairing_code = None
+
+            # Try known data-testid selectors
+            for sel in [
+                '[data-testid="link-device-phone-number-code"]',
+                '[data-testid*="pairing-code"]',
+                '[data-testid*="link-device-phone-number"]',
+            ]:
+                try:
+                    el = await page.wait_for_selector(sel, timeout=8_000)
+                    if el:
+                        text = (await el.inner_text()).strip()
+                        if text:
+                            pairing_code = text
+                            break
+                except Exception:
+                    pass
+
+            # Fallback: WhatsApp renders the code as individual character boxes.
+            # Find a container whose children are each a single alphanumeric char/dash.
+            if not pairing_code:
+                try:
+                    pairing_code = await page.evaluate("""() => {
+                        // Strategy 1: container with 8-9 single-char children
+                        for (const el of document.querySelectorAll('div, span')) {
+                            const kids = Array.from(el.children);
+                            if (kids.length < 8 || kids.length > 10) continue;
+                            const chars = kids.map(k => k.innerText?.trim()).filter(Boolean);
+                            if (chars.length >= 8 && chars.every(c => /^[A-Z0-9\\-]$/.test(c)))
+                                return chars.join('');
+                        }
+                        // Strategy 2: any leaf whose full text matches the pattern
+                        const pat = /^[A-Z0-9]{4}[\\s\\-]?[A-Z0-9]{4}$/;
+                        for (const el of document.querySelectorAll('span, div, p')) {
+                            const t = el.innerText?.trim();
+                            if (t && pat.test(t) && el.children.length === 0)
+                                return t;
+                        }
+                        return null;
+                    }""")
+                except Exception:
+                    pass
+
+            if pairing_code:
+                print(f"[whatsapp] Pairing code: {pairing_code}")
+                return pairing_code
+
+            print("[whatsapp] Could not scrape pairing code — visible in the browser window.")
             return None
 
     async def is_logged_in(self) -> bool:
