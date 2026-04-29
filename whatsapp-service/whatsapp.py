@@ -159,8 +159,31 @@ class WhatsAppSender:
             except Exception:
                 await page.keyboard.press("Enter")
 
-            # Step 4 — scrape the pairing code
-            await asyncio.sleep(2)
+            # Step 4 — wait for either the pairing code screen or an error dialog
+            try:
+                await page.wait_for_selector(
+                    f"{SEL_PAIRING_CODE}, div[role='dialog']",
+                    timeout=15_000,
+                )
+            except Exception:
+                pass
+
+            # Check for error dialog first before attempting to scrape
+            dialog = await page.query_selector("div[role='dialog']")
+            if dialog:
+                text = (await dialog.inner_text()).lower()
+                try:
+                    await page.get_by_role("button", name="OK").click(timeout=3_000)
+                except Exception:
+                    pass
+                if "too many" in text or "try again later" in text:
+                    raise WhatsAppError(
+                        "Too many login attempts. WhatsApp has temporarily blocked "
+                        "device linking. Please wait a few hours and try again."
+                    )
+                raise WhatsAppError(f"WhatsApp showed an unexpected error: {text.strip()[:120]}")
+
+            await asyncio.sleep(1)
 
             pairing_code = None
 
@@ -181,24 +204,22 @@ class WhatsAppSender:
                     pass
 
             # Fallback: WhatsApp renders the code as individual character boxes.
-            # Find a container whose children are each a single alphanumeric char/dash.
+            # Find a container whose DIRECT children are each a single char/dash,
+            # and whose total child count is exactly 8 or 9 (4 chars + dash + 4 chars).
             if not pairing_code:
                 try:
                     pairing_code = await page.evaluate("""() => {
-                        // Strategy 1: container with 8-9 single-char children
                         for (const el of document.querySelectorAll('div, span')) {
                             const kids = Array.from(el.children);
-                            if (kids.length < 8 || kids.length > 10) continue;
-                            const chars = kids.map(k => k.innerText?.trim()).filter(Boolean);
-                            if (chars.length >= 8 && chars.every(c => /^[A-Z0-9\\-]$/.test(c)))
-                                return chars.join('');
-                        }
-                        // Strategy 2: any leaf whose full text matches the pattern
-                        const pat = /^[A-Z0-9]{4}[\\s\\-]?[A-Z0-9]{4}$/;
-                        for (const el of document.querySelectorAll('span, div, p')) {
-                            const t = el.innerText?.trim();
-                            if (t && pat.test(t) && el.children.length === 0)
-                                return t;
+                            if (kids.length < 8 || kids.length > 9) continue;
+                            const chars = kids.map(k => (k.innerText || k.textContent || '').trim());
+                            // Every child must be exactly one alphanumeric char or a dash
+                            if (chars.every(c => /^[A-Z0-9\\-]$/.test(c))) {
+                                const code = chars.join('');
+                                // Final sanity check: must be 8-9 chars, mostly alphanumeric
+                                if (/^[A-Z0-9]{4}\\-?[A-Z0-9]{4}$/.test(code))
+                                    return code;
+                            }
                         }
                         return null;
                     }""")
